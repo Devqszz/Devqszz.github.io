@@ -19,17 +19,6 @@
             position: relative;
         }
         
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" opacity="0.05"><path fill="white" d="M20,20 L30,20 L25,30 Z M70,70 L80,70 L75,80 Z M50,50 L60,50 L55,60 Z"/></svg>') repeat;
-            pointer-events: none;
-        }
-        
         .container {
             max-width: 650px;
             margin: 0 auto;
@@ -46,7 +35,6 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             padding: 25px 20px;
             text-align: center;
-            position: relative;
         }
         
         .header h1 {
@@ -54,7 +42,6 @@
             font-size: 28px;
             margin-bottom: 8px;
             font-weight: 700;
-            letter-spacing: -0.5px;
         }
         
         .header p {
@@ -80,10 +67,6 @@
             background: #f3f4f6;
             padding: 8px 15px;
             border-radius: 12px;
-        }
-        
-        .date-icon {
-            font-size: 20px;
         }
         
         .date-text {
@@ -272,10 +255,6 @@
             box-shadow: 0 10px 25px -5px rgba(102, 126, 234, 0.4);
         }
         
-        .refresh-btn:active {
-            transform: translateY(0);
-        }
-        
         .footer {
             background: #f9fafb;
             padding: 15px 20px;
@@ -288,30 +267,19 @@
             color: #9ca3af;
         }
         
+        .source {
+            font-size: 10px;
+            color: #d1d5db;
+            margin-top: 5px;
+        }
+        
         @media (max-width: 480px) {
-            body {
-                padding: 10px;
-            }
-            
-            .container {
-                border-radius: 20px;
-            }
-            
-            .header h1 {
-                font-size: 22px;
-            }
-            
-            .currency-item {
-                padding: 12px 15px;
-            }
-            
-            .rate-value {
-                font-size: 16px;
-            }
-            
-            .stat-value {
-                font-size: 18px;
-            }
+            body { padding: 10px; }
+            .container { border-radius: 20px; }
+            .header h1 { font-size: 22px; }
+            .currency-item { padding: 12px 15px; }
+            .rate-value { font-size: 16px; }
+            .stat-value { font-size: 18px; }
         }
     </style>
 </head>
@@ -327,7 +295,7 @@
                 <span class="date-icon">📅</span>
                 <span class="date-text" id="fullDate">Загрузка...</span>
             </div>
-            <div class="rate-date" id="comparisonDate">Сравнение с предыдущим днем</div>
+            <div class="rate-date" id="comparisonDate">Загрузка данных...</div>
         </div>
         
         <div class="stats">
@@ -346,7 +314,7 @@
         </div>
         
         <div class="comparison-info" id="comparisonInfo">
-            📊 Изменение относительно предыдущего торгового дня
+            🔄 Загрузка данных для сравнения...
         </div>
         
         <div id="currencyContainer" class="currency-list">
@@ -362,35 +330,67 @@
         
         <div class="footer">
             <div class="last-update" id="lastUpdate">—</div>
-            <div class="source">Данные НБРБ • Изменение относительно предыдущего дня</div>
+            <div class="source">Данные НБРБ • Сравнение с последним доступным торговым днём</div>
         </div>
     </div>
 
     <script>
         let autoRefreshInterval;
+        let cachedPreviousRates = null;
+        let previousDate = null;
         
-        // Функция для получения предыдущего курса валюты из API НБРБ
-        async function getPreviousRate(currencyId, currentDate) {
+        // Функция для получения последней доступной даты с курсами
+        async function getLastAvailableDate() {
             try {
-                // Получаем курс на昨天的 дату
-                const yesterday = new Date(currentDate);
-                yesterday.setDate(yesterday.getDate() - 1);
-                
-                // Форматируем дату для API
-                const year = yesterday.getFullYear();
-                const month = String(yesterday.getMonth() + 1).padStart(2, '0');
-                const day = String(yesterday.getDate()).padStart(2, '0');
-                const dateStr = `${year}-${month}-${day}`;
-                
-                const response = await fetch(`https://api.nbrb.by/exrates/rates/${currencyId}?ondate=${dateStr}&parammode=2`);
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    return data.Cur_OfficialRate;
+                // Пробуем получить данные за последние 10 дней
+                for (let i = 1; i <= 10; i++) {
+                    const checkDate = new Date();
+                    checkDate.setDate(checkDate.getDate() - i);
+                    
+                    const year = checkDate.getFullYear();
+                    const month = String(checkDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(checkDate.getDate()).padStart(2, '0');
+                    const dateStr = `${year}-${month}-${day}`;
+                    
+                    // Проверяем есть ли данные за эту дату по USD
+                    const testResponse = await fetch(`https://api.nbrb.by/exrates/rates/USD?ondate=${dateStr}&parammode=2`);
+                    
+                    if (testResponse.ok) {
+                        const testData = await testResponse.json();
+                        if (testData && testData.Cur_OfficialRate) {
+                            return { date: checkDate, dateStr: dateStr };
+                        }
+                    }
+                    
+                    // Небольшая задержка между запросами
+                    await new Promise(resolve => setTimeout(resolve, 100));
                 }
                 return null;
             } catch (error) {
-                console.log(`Нет данных за предыдущий день для валюты ${currencyId}`);
+                console.error('Ошибка при поиске последней даты:', error);
+                return null;
+            }
+        }
+        
+        // Функция для получения курсов валют за конкретную дату
+        async function getRatesForDate(dateStr) {
+            try {
+                const response = await fetch(`https://api.nbrb.by/exrates/rates?ondate=${dateStr}&periodicity=0`);
+                if (response.ok) {
+                    const data = await response.json();
+                    const ratesMap = {};
+                    data.forEach(currency => {
+                        ratesMap[currency.Cur_Abbreviation] = {
+                            rate: currency.Cur_OfficialRate,
+                            scale: currency.Cur_Scale,
+                            name: currency.Cur_Name
+                        };
+                    });
+                    return ratesMap;
+                }
+                return null;
+            } catch (error) {
+                console.error('Ошибка при получении курсов за дату:', error);
                 return null;
             }
         }
@@ -399,18 +399,21 @@
         async function fetchCurrencies() {
             const container = document.getElementById('currencyContainer');
             const fullDateSpan = document.getElementById('fullDate');
+            const comparisonInfoSpan = document.getElementById('comparisonInfo');
+            const comparisonDateSpan = document.getElementById('comparisonDate');
             
             container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>Загрузка курсов валют...</div></div>';
+            comparisonInfoSpan.innerHTML = '🔄 Поиск данных для сравнения...';
             
             try {
-                // API Национального банка РБ
+                // Получаем текущие курсы
                 const response = await fetch('https://api.nbrb.by/exrates/rates?periodicity=0');
                 
                 if (!response.ok) {
                     throw new Error('Ошибка загрузки данных');
                 }
                 
-                const data = await response.json();
+                const currentData = await response.json();
                 
                 // Получаем текущую дату
                 const today = new Date();
@@ -418,32 +421,57 @@
                 fullDateSpan.textContent = today.toLocaleDateString('ru-RU', options);
                 
                 // Фильтруем валюты
-                const currencies = data.filter(c => 
+                const currencies = currentData.filter(c => 
                     ['USD', 'EUR', 'RUB', 'CNY', 'GBP', 'JPY', 'CHF', 'PLN', 'TRY', 'UAH', 'KZT', 'CZK', 'SEK', 'NOK', 'DKK'].includes(c.Cur_Abbreviation)
                 );
+                
+                // Получаем последнюю доступную предыдущую дату
+                const lastAvailable = await getLastAvailableDate();
+                
+                let previousRatesMap = {};
+                let comparisonDateText = '';
+                let hasComparisonData = false;
+                
+                if (lastAvailable && lastAvailable.date) {
+                    previousRatesMap = await getRatesForDate(lastAvailable.dateStr);
+                    if (previousRatesMap && Object.keys(previousRatesMap).length > 0) {
+                        hasComparisonData = true;
+                        const prevDate = lastAvailable.date;
+                        comparisonDateText = `Сравнение с ${prevDate.toLocaleDateString('ru-RU', options)}`;
+                        comparisonDateSpan.textContent = comparisonDateText;
+                        comparisonInfoSpan.innerHTML = `📊 Изменение относительно ${prevDate.toLocaleDateString('ru-RU')}`;
+                    }
+                }
+                
+                if (!hasComparisonData) {
+                    comparisonInfoSpan.innerHTML = '⚠️ Нет данных для сравнения (первые данные или выходной день)';
+                    comparisonDateSpan.textContent = 'Нет данных для сравнения';
+                }
                 
                 let increased = 0;
                 let decreased = 0;
                 let html = '';
                 
-                // Для каждой валюты получаем предыдущий курс
                 for (const currency of currencies) {
                     const code = currency.Cur_Abbreviation;
                     const currentRate = currency.Cur_OfficialRate;
                     const scale = currency.Cur_Scale;
                     const name = currency.Cur_Name;
                     
-                    // Получаем предыдущий курс из API
-                    const previousRate = await getPreviousRate(currency.Cur_ID, new Date());
+                    let previousRate = null;
                     
+                    if (hasComparisonData && previousRatesMap[code]) {
+                        previousRate = previousRatesMap[code].rate;
+                    }
+                    
+                    let hasComparison = false;
                     let change = 0;
                     let changePercent = 0;
-                    let hasPrevious = false;
                     
                     if (previousRate !== null && previousRate !== currentRate) {
+                        hasComparison = true;
                         change = currentRate - previousRate;
                         changePercent = (change / previousRate) * 100;
-                        hasPrevious = true;
                         
                         if (change > 0) increased++;
                         if (change < 0) decreased++;
@@ -465,7 +493,7 @@
                                 <div class="rate-value">
                                     ${currentRate.toFixed(4)} <span class="rate-currency">BYN</span>
                                 </div>
-                                ${hasPrevious ? `
+                                ${hasComparison ? `
                                     <div class="rate-change ${changeClass}">
                                         ${changeSymbol} ${Math.abs(change).toFixed(4)} BYN (${changePercent > 0 ? '+' : ''}${changePercent.toFixed(2)}%)
                                     </div>
@@ -495,7 +523,8 @@
                         timestamp: new Date().toISOString(),
                         increased: increased,
                         decreased: decreased,
-                        total: currencies.length
+                        total: currencies.length,
+                        hasComparison: hasComparisonData
                     }));
                 }
                 
@@ -513,12 +542,12 @@
         
         // Функция для показа подробной информации о валюте
         function showCurrencyInfo(code, rate, scale, name) {
+            const message = `${name} (${code})\nНоминал: ${scale} ${code}\nКурс: ${rate.toFixed(4)} BYN`;
+            
             if (window.Telegram && window.Telegram.WebApp) {
-                window.Telegram.WebApp.showAlert(
-                    `${name} (${code})\nНоминал: ${scale} ${code}\nКурс: ${rate.toFixed(4)} BYN`
-                );
+                window.Telegram.WebApp.showAlert(message);
             } else {
-                alert(`${name} (${code})\nНоминал: ${scale} ${code}\nКурс: ${rate.toFixed(4)} BYN`);
+                alert(message);
             }
         }
         
